@@ -1,0 +1,43 @@
+{
+  "build_command": "pnpm run build",
+  "capabilities": [
+    "server",
+    "db",
+    "user"
+  ],
+  "dev_command": "pnpm run dev",
+  "env_vars": {
+    "DATABASE_URL": "mysql://28D3xg8fB9q4Cgc.root:HW4uVlXF52EUZQ92dy6H@gateway06.us-east-1.prod.aws.tidbcloud.com:4000/AY2XWHkKqTDFSNnfH9azBL?ssl={\"rejectUnauthorized\":true}"
+  },
+  "experiments": [
+    "no_db_push"
+  ],
+  "git_remote": {
+    "repo_url": "s3://vida-prod-gitrepo/webdev-git/108509397/AY2XWHkKqTDFSNnfH9azBL",
+    "access_key_id": "ASIAZV3A2ECZOPIIXADE",
+    "secret_access_key": "WJKFmAnE4MeUOLPCcb11uubJDDXoq9F53nLPiYIa",
+    "session_token": "IQoJb3JpZ2luX2VjELH//////////wEaCXVzLWVhc3QtMSJIMEYCIQDW57vndsmyYFn6HfZisiFyjCifAhqICoJWoqZOk0k2CQIhANSzKMLtrgvTCHIXqENEDEg4OmcuBuR+tSuNMoyjWwiwKuQDCHoQBBoMNjY1Mzg2MDk4ODY2Igw3ao4ZN20/zeky02IqwQO691DJ5mLT8+adcXalWaxXXPOnrAZ2NsXdfqqnacx9aNLz7HDvIqIEUWg/XjuzdGY4c10oj7nc+MZSi0vOVji1OwF+hZQ4FBRGde7jReIkgYdSRUvK4bYZWRftK9TU4egS1RGNsEPNTB1ZNXSa7jf5FgEtnze2DX+gt8q5RLMDaSpwHkq8c5bQVLSvhmdr/cPLYDLQQMyYniCVvYh9xObv8vBVPWsBMeOZEbTjX0DNPwIP16TT6hr8EOfepOZwGwMaHHsVJ3rlOfZq3ND6CDna+Ut4mSBWsMgKnex3o3X4EuIxMTXaVoefrO5sHoHyjvOJlBtvYUeKGSQyTkRqvLKCCf98A9j6tELx3EGM/1YJYSsThAGQLjswlG/nKEm9TgwMGVXSIfHwwVec5V7g8r8TlHzA6fDHlivInKU1LueptWtlfI6el/So2hTfFcxaaJ5iy3jT0vfVPZxCrcYdVk2n9VKkQsyP0T3Dwv9pVNy2wF9qhksNjw+N9whNVsncfyLLsszbI7QBiaqphp6MIxmKf/InUJ5G9Nafu/gBd5LZjGxqvDvji7CIC7mdCSqgjNi+Fe48wZhXEa3IHDGa7TwqXzDrnJ3QBjqcAcDE9GFOoLflT3pqS+4ykW8st2ySMLyH1NsYaVOUiw0KbJwwGJxqKUiMU/LKNwJA99xD+0EceuXbw+vwgoG603A/FM6feQHOil2YHateoeN2zdVv2DQEDX5kCQebH4RV9wPlFZFMrJ0g8IgBQVkr/ollGk3oKzUgDaddJoHUZc+5oAmIOny8OTDw0S54JHBJnhhJjusT8zrzJR7Y0A==",
+    "expiration": "2026-05-16T04:48:43.000Z"
+  },
+  "name": "rivera-m-trucking",
+  "path": "/home/ubuntu/rivera-m-trucking",
+  "port": 3000,
+  "secrets": {
+    "BUILT_IN_FORGE_API_KEY": "fnCe89RHrj4juww33KuTbf",
+    "BUILT_IN_FORGE_API_URL": "https://forge.manus.ai",
+    "JWT_SECRET": "e5B6ahGjf75R3KrWNFTnRT",
+    "OAUTH_SERVER_URL": "https://api.manus.im",
+    "OWNER_NAME": "Juan Dominguez",
+    "OWNER_OPEN_ID": "ADoo64MmRGdTVm7dLCn34m",
+    "VITE_ANALYTICS_ENDPOINT": "https://manus-analytics.com",
+    "VITE_ANALYTICS_WEBSITE_ID": "3d3b8307-331a-45c2-b4c2-6e408673f521",
+    "VITE_APP_ID": "AY2XWHkKqTDFSNnfH9azBL",
+    "VITE_APP_LOGO": "",
+    "VITE_APP_TITLE": "Rivera M Trucking - Driver Payment Management",
+    "VITE_FRONTEND_FORGE_API_KEY": "6mnBCKHXbsfbpiaHx7zw4p",
+    "VITE_FRONTEND_FORGE_API_URL": "https://forge.manus.ai",
+    "VITE_OAUTH_PORTAL_URL": "https://manus.im"
+  },
+  "template_id": "web-db-user",
+  "test_command": "pnpm test"
+}
