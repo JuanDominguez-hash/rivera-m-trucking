@@ -1,7 +1,7 @@
 import { trpc } from "@/lib/trpc";
 import { cn, formatDate, getDriverStatusColor, getDriverStatusLabel } from "@/lib/utils";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Edit2, Plus, Search, Trash2, UserCheck, UserX, Users } from "lucide-react";
+import { Camera, Edit2, Eye, EyeOff, Image, Plus, Search, Trash2, Users } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -11,6 +11,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+
+// Helper: mask SSN showing only last 4 digits
+function maskSSN(last4?: string | null): string {
+  if (!last4) return "***-**-****";
+  return `***-**-${last4}`;
+}
 
 const driverSchema = z.object({
   driverCode: z.string().min(1, "Requerido").max(32),
@@ -20,6 +27,7 @@ const driverSchema = z.object({
   email: z.string().optional(),
   address: z.string().optional(),
   ssnLast4: z.string().max(4).optional(),
+  password: z.string().optional(),
   status: z.enum(["active", "inactive"]),
 });
 
@@ -29,9 +37,15 @@ export default function DriversPage() {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [photosDriverId, setPhotosDriverId] = useState<number | null>(null);
   const utils = trpc.useUtils();
 
   const { data: drivers, isLoading } = trpc.drivers.list.useQuery();
+  const { data: driverPhotos } = trpc.drivers.photos.useQuery(
+    { driverId: photosDriverId! },
+    { enabled: !!photosDriverId }
+  );
 
   const form = useForm<DriverForm>({
     resolver: zodResolver(driverSchema),
@@ -67,6 +81,14 @@ export default function DriversPage() {
     onError: (e) => toast.error(e.message),
   });
 
+  const deletePhotoMutation = trpc.drivers.deletePhoto.useMutation({
+    onSuccess: () => {
+      toast.success("Foto eliminada");
+      utils.drivers.photos.invalidate({ driverId: photosDriverId! });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
   const filtered = drivers?.filter(d =>
     `${d.firstName} ${d.lastName} ${d.driverCode}`.toLowerCase().includes(search.toLowerCase())
   ) ?? [];
@@ -74,22 +96,25 @@ export default function DriversPage() {
   function openCreate() {
     setEditId(null);
     form.reset({ status: "active" });
+    setShowPassword(false);
     setOpen(true);
   }
 
-  function openEdit(d: typeof drivers extends (infer T)[] | undefined ? T : never) {
+  function openEdit(d: any) {
     if (!d) return;
-    setEditId((d as any).id);
+    setEditId(d.id);
     form.reset({
-      driverCode: (d as any).driverCode,
-      firstName: (d as any).firstName,
-      lastName: (d as any).lastName,
-      phone: (d as any).phone ?? "",
-      email: (d as any).email ?? "",
-      address: (d as any).address ?? "",
-      ssnLast4: (d as any).ssnLast4 ?? "",
-      status: (d as any).status,
+      driverCode: d.driverCode,
+      firstName: d.firstName,
+      lastName: d.lastName,
+      phone: d.phone ?? "",
+      email: d.email ?? "",
+      address: d.address ?? "",
+      ssnLast4: d.ssnLast4 ?? "",
+      password: d.password ?? "",
+      status: d.status,
     });
+    setShowPassword(false);
     setOpen(true);
   }
 
@@ -186,12 +211,28 @@ export default function DriversPage() {
                   </span>
                 </div>
                 <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-                  <p className="text-xs text-muted-foreground">ID: <span className="font-mono font-medium text-foreground">{d.driverCode}</span></p>
+                  <p className="text-xs text-muted-foreground">
+                    ID/DVR: <span className="font-mono font-medium text-foreground">{d.driverCode}</span>
+                  </p>
+                  {d.ssnLast4 && (
+                    <p className="text-xs text-muted-foreground">
+                      SSN: <span className="font-mono">{maskSSN(d.ssnLast4)}</span>
+                    </p>
+                  )}
                   {d.phone && <p className="text-xs text-muted-foreground">{d.phone}</p>}
                   {d.email && <p className="text-xs text-muted-foreground hidden sm:block">{d.email}</p>}
                 </div>
               </div>
               <div className="flex items-center gap-1 shrink-0">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-muted-foreground hover:text-blue-500"
+                  title="Ver fotos"
+                  onClick={() => setPhotosDriverId(d.id)}
+                >
+                  <Camera className="h-4 w-4" />
+                </Button>
                 <Button
                   variant="ghost"
                   size="icon"
@@ -218,7 +259,7 @@ export default function DriversPage() {
         </div>
       )}
 
-      {/* Dialog */}
+      {/* Create/Edit Dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -245,7 +286,7 @@ export default function DriversPage() {
               <div className="grid grid-cols-2 gap-3">
                 <FormField control={form.control} name="driverCode" render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Código / ID</FormLabel>
+                    <FormLabel>ID/DVR</FormLabel>
                     <FormControl><Input placeholder="JD-001" {...field} /></FormControl>
                     <FormMessage />
                   </FormItem>
@@ -287,13 +328,38 @@ export default function DriversPage() {
                   <FormMessage />
                 </FormItem>
               )} />
-              <FormField control={form.control} name="ssnLast4" render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Últimos 4 del SSN</FormLabel>
-                  <FormControl><Input placeholder="1234" maxLength={4} {...field} /></FormControl>
-                  <FormMessage />
-                </FormItem>
-              )} />
+              <div className="grid grid-cols-2 gap-3">
+                <FormField control={form.control} name="ssnLast4" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Últimos 4 del SSN</FormLabel>
+                    <FormControl><Input placeholder="1234" maxLength={4} {...field} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+                <FormField control={form.control} name="password" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Contraseña del Driver</FormLabel>
+                    <div className="relative">
+                      <FormControl>
+                        <Input
+                          type={showPassword ? "text" : "password"}
+                          placeholder="Asignar contraseña"
+                          className="pr-10"
+                          {...field}
+                        />
+                      </FormControl>
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      >
+                        {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+              </div>
               <div className="flex gap-3 pt-2">
                 <Button type="button" variant="outline" className="flex-1" onClick={() => setOpen(false)}>
                   Cancelar
@@ -308,6 +374,57 @@ export default function DriversPage() {
               </div>
             </form>
           </Form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Photos Dialog */}
+      <Dialog open={!!photosDriverId} onOpenChange={() => setPhotosDriverId(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Camera className="h-5 w-5" />
+              Fotos del Driver
+            </DialogTitle>
+          </DialogHeader>
+          {!driverPhotos || driverPhotos.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              <Image className="h-12 w-12 mx-auto mb-3 opacity-30" />
+              <p>Este driver no ha subido fotos aún</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {driverPhotos.map(photo => (
+                <div key={photo.id} className="relative group rounded-lg overflow-hidden border border-border">
+                  <img
+                    src={photo.photoUrl}
+                    alt={photo.caption || "Foto del driver"}
+                    className="w-full h-32 object-cover"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = "https://placehold.co/200x150?text=Error";
+                    }}
+                  />
+                  <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2">
+                    <div className="flex-1">
+                      {photo.caption && <p className="text-white text-xs">{photo.caption}</p>}
+                      <p className="text-white/60 text-xs">{new Date(photo.createdAt).toLocaleDateString()}</p>
+                    </div>
+                    <Button
+                      size="icon"
+                      variant="destructive"
+                      className="h-7 w-7"
+                      onClick={() => {
+                        if (confirm("¿Eliminar esta foto?")) {
+                          deletePhotoMutation.mutate({ id: photo.id });
+                        }
+                      }}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

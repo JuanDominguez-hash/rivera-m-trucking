@@ -4,7 +4,10 @@ import { formatCurrency, getWeekRange } from "@/lib/utils";
 import {
   AlertTriangle,
   CalendarDays,
+  Camera,
   DollarSign,
+  Eye,
+  EyeOff,
   MapPin,
   Package,
   Receipt,
@@ -12,8 +15,10 @@ import {
   Truck,
   Users,
 } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useLocation } from "wouter";
+
+const APP_NAME = import.meta.env.VITE_APP_NAME || "Rivera M Trucking";
 
 function StatCard({
   icon: Icon,
@@ -55,6 +60,145 @@ function StatCard({
   );
 }
 
+function DriverDashboard({ userName }: { userName: string }) {
+  const [, setLocation] = useLocation();
+  const [showPassword, setShowPassword] = useState(false);
+  const { data: driver } = trpc.drivers.myProfile.useQuery();
+  const { data: myStubs } = trpc.payStubs.myStubs.useQuery();
+  const { data: myLogs } = trpc.dailyLogs.myLogs.useQuery();
+
+  const totalEarned = myStubs?.reduce((s, stub) => s + parseFloat(String(stub.totalPay ?? "0")), 0) ?? 0;
+  const pendingStubs = myStubs?.filter(s => s.status === "sent").length ?? 0;
+  const totalDelivered = myLogs?.reduce((s, l) => s + (l.log.packagesDelivered ?? 0), 0) ?? 0;
+
+  return (
+    <div className="space-y-6">
+      {/* Welcome */}
+      <div>
+        <h1 className="text-2xl font-bold text-foreground">
+          Bienvenido, {userName.split(" ")[0]}
+        </h1>
+        <p className="text-muted-foreground text-sm mt-1">{APP_NAME} — Driver Portal</p>
+      </div>
+
+      {/* Driver ID Card */}
+      {driver && (
+        <div className="bg-gradient-to-r from-slate-800 to-slate-900 rounded-2xl p-5 text-white shadow-lg">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-xs text-white/50 uppercase tracking-wider mb-1">Driver Card</p>
+              <p className="text-xl font-bold">{driver.firstName} {driver.lastName}</p>
+            </div>
+            <div className="bg-yellow-500 rounded-lg p-2">
+              <Truck className="h-6 w-6 text-white" />
+            </div>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-xs text-white/50">ID/DVR</p>
+              <p className="text-lg font-mono font-bold text-yellow-400">{driver.driverCode}</p>
+            </div>
+            <div>
+              <p className="text-xs text-white/50">Contraseña</p>
+              <div className="flex items-center gap-2">
+                <p className="text-lg font-mono font-bold text-yellow-400">
+                  {showPassword ? (driver.password || "—") : "••••••••"}
+                </p>
+                <button
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="text-white/50 hover:text-white transition-colors"
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+            <div>
+              <p className="text-xs text-white/50">Estado</p>
+              <span className={`text-sm font-medium ${driver.status === "active" ? "text-green-400" : "text-red-400"}`}>
+                {driver.status === "active" ? "Activo" : "Inactivo"}
+              </span>
+            </div>
+            {driver.phone && (
+              <div>
+                <p className="text-xs text-white/50">Teléfono</p>
+                <p className="text-sm text-white/80">{driver.phone}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <StatCard
+          icon={Package}
+          label="Paquetes entregados"
+          value={totalDelivered.toLocaleString()}
+          sub="total histórico"
+          color="green"
+          onClick={() => setLocation("/my-activity")}
+        />
+        <StatCard
+          icon={DollarSign}
+          label="Total ganado"
+          value={formatCurrency(totalEarned)}
+          sub="neto acumulado"
+          color="blue"
+          onClick={() => setLocation("/my-pay-stubs")}
+        />
+        <StatCard
+          icon={Receipt}
+          label="Pay Stubs pendientes"
+          value={pendingStubs}
+          sub="por confirmar"
+          color={pendingStubs > 0 ? "yellow" : "green"}
+          onClick={() => setLocation("/my-pay-stubs")}
+        />
+      </div>
+
+      {/* Quick actions */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div
+          className="bg-card border border-border rounded-xl p-4 flex items-center gap-3 cursor-pointer hover:border-primary/40 transition-all"
+          onClick={() => setLocation("/my-activity")}
+        >
+          <div className="h-10 w-10 rounded-lg bg-blue-50 dark:bg-blue-900/20 flex items-center justify-center">
+            <CalendarDays className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+          </div>
+          <div>
+            <p className="font-medium text-foreground text-sm">Mi Actividad</p>
+            <p className="text-xs text-muted-foreground">Ver registros diarios</p>
+          </div>
+        </div>
+        <div
+          className="bg-card border border-border rounded-xl p-4 flex items-center gap-3 cursor-pointer hover:border-primary/40 transition-all"
+          onClick={() => setLocation("/my-pay-stubs")}
+        >
+          <div className="h-10 w-10 rounded-lg bg-green-50 dark:bg-green-900/20 flex items-center justify-center">
+            <Receipt className="h-5 w-5 text-green-600 dark:text-green-400" />
+          </div>
+          <div>
+            <p className="font-medium text-foreground text-sm">Mis Pay Stubs</p>
+            <p className="text-xs text-muted-foreground">Ver y confirmar pagos</p>
+          </div>
+        </div>
+        <div
+          className="bg-card border border-border rounded-xl p-4 flex items-center gap-3 cursor-pointer hover:border-primary/40 transition-all"
+          onClick={() => setLocation("/my-photos")}
+        >
+          <div className="h-10 w-10 rounded-lg bg-purple-50 dark:bg-purple-900/20 flex items-center justify-center">
+            <Camera className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+          </div>
+          <div>
+            <p className="font-medium text-foreground text-sm">Mis Fotos</p>
+            <p className="text-xs text-muted-foreground">Subir fotos de entrega</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
@@ -81,6 +225,10 @@ export default function Dashboard() {
     { enabled: isAdmin }
   );
 
+  if (!isAdmin) {
+    return <DriverDashboard userName={user?.name || "Driver"} />;
+  }
+
   const activeDrivers = drivers?.filter(d => d.status === "active").length ?? 0;
   const activeRoutes = routes?.filter(r => r.status === "active").length ?? 0;
   const weeklyGross = weeklyReport?.reduce((s, r) => s + Number(r.grossPay ?? 0), 0) ?? 0;
@@ -88,21 +236,6 @@ export default function Dashboard() {
   const yearlyTotal = annualReport?.reduce((s, r) => s + Number(r.totalPay ?? 0), 0) ?? 0;
   const weeklyPenalties = penalties?.reduce((s, p) => s + parseFloat(p.penalty.amount ?? "0"), 0) ?? 0;
   const disputedCount = payStubs?.length ?? 0;
-
-  if (!isAdmin) {
-    return (
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Bienvenido, {user?.name?.split(" ")[0]}</h1>
-          <p className="text-muted-foreground text-sm mt-1">Rivera M Trucking — Driver Portal</p>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <StatCard icon={CalendarDays} label="Mi Actividad" value="Ver registros" color="blue" onClick={() => setLocation("/my-activity")} />
-          <StatCard icon={Receipt} label="Mis Pay Stubs" value="Ver pagos" color="green" onClick={() => setLocation("/my-pay-stubs")} />
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6">
@@ -211,7 +344,7 @@ export default function Dashboard() {
                         </div>
                         <div>
                           <p className="font-medium">{row.driverFirstName} {row.driverLastName}</p>
-                          <p className="text-xs text-muted-foreground">{row.driverCode}</p>
+                          <p className="text-xs text-muted-foreground font-mono">ID/DVR: {row.driverCode}</p>
                         </div>
                       </div>
                     </td>

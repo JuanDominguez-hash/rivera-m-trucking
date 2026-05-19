@@ -1,7 +1,7 @@
 import { trpc } from "@/lib/trpc";
 import { cn, formatCurrency, formatDate, getPayStubStatusColor, getPayStubStatusLabel, getWeekRange } from "@/lib/utils";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { CheckCircle, ChevronDown, ChevronUp, DollarSign, Plus, Receipt, Send, XCircle } from "lucide-react";
+import { CheckCircle, ChevronDown, ChevronUp, DollarSign, Plus, Receipt, Send, SendHorizonal, XCircle, Zap } from "lucide-react";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 
 const generateSchema = z.object({
   driverId: z.string().min(1, "Selecciona un driver"),
@@ -18,10 +19,17 @@ const generateSchema = z.object({
   weekEnd: z.string().min(1, "Requerido"),
 });
 
+const bulkSchema = z.object({
+  weekStart: z.string().min(1, "Requerido"),
+  weekEnd: z.string().min(1, "Requerido"),
+});
+
 type GenerateForm = z.infer<typeof generateSchema>;
+type BulkForm = z.infer<typeof bulkSchema>;
 
 export default function PayStubsPage() {
   const [open, setOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const [filterDriver, setFilterDriver] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -39,11 +47,26 @@ export default function PayStubsPage() {
     defaultValues: { weekStart, weekEnd },
   });
 
+  const bulkForm = useForm<BulkForm>({
+    resolver: zodResolver(bulkSchema),
+    defaultValues: { weekStart, weekEnd },
+  });
+
   const generateMutation = trpc.payStubs.generate.useMutation({
     onSuccess: (data) => {
       toast.success(`Pay stub generado: ${formatCurrency(data.totalPay)} neto`);
       utils.payStubs.list.invalidate();
       setOpen(false);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const generateAllMutation = trpc.payStubs.generateAll.useMutation({
+    onSuccess: (results) => {
+      const count = Array.isArray(results) ? results.length : 0;
+      toast.success(`${count} pay stubs generados para todos los drivers activos`);
+      utils.payStubs.list.invalidate();
+      setBulkOpen(false);
     },
     onError: (e) => toast.error(e.message),
   });
@@ -56,12 +79,29 @@ export default function PayStubsPage() {
     onError: (e) => toast.error(e.message),
   });
 
+  const sendAllMutation = trpc.payStubs.sendAll.useMutation({
+    onSuccess: () => {
+      toast.success("Pay stubs enviados a todos los drivers");
+      utils.payStubs.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const markPaidMutation = trpc.payStubs.markPaid.useMutation({
+    onSuccess: () => {
+      toast.success("Pay stub marcado como pagado");
+      utils.payStubs.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
   const filtered = payStubs ?? [];
+  const draftCount = payStubs?.filter(p => p.stub.status === "draft").length ?? 0;
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
             <Receipt className="h-6 w-6 text-primary" />
@@ -69,10 +109,41 @@ export default function PayStubsPage() {
           </h1>
           <p className="text-muted-foreground text-sm mt-1">Comprobantes de pago semanales</p>
         </div>
-        <Button onClick={() => setOpen(true)} className="gap-2">
-          <Plus className="h-4 w-4" />
-          <span className="hidden sm:inline">Generar Pay Stub</span>
-        </Button>
+        <div className="flex gap-2 flex-wrap">
+          <Button
+            variant="outline"
+            onClick={() => setBulkOpen(true)}
+            className="gap-2"
+          >
+            <Zap className="h-4 w-4" />
+            <span className="hidden sm:inline">Generar Todos</span>
+          </Button>
+          {draftCount > 0 && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (confirm(`¿Enviar ${draftCount} pay stubs en borrador a todos los drivers?`)) {
+                  const weekDates = payStubs?.find(p => p.stub.status === "draft");
+                  if (weekDates) {
+                    sendAllMutation.mutate({
+                      weekStart: weekDates.stub.weekStart,
+                      weekEnd: weekDates.stub.weekEnd,
+                    });
+                  }
+                }
+              }}
+              disabled={sendAllMutation.isPending}
+              className="gap-2 border-yellow-500 text-yellow-600 hover:bg-yellow-50"
+            >
+              <SendHorizonal className="h-4 w-4" />
+              <span className="hidden sm:inline">Enviar Todos ({draftCount})</span>
+            </Button>
+          )}
+          <Button onClick={() => setOpen(true)} className="gap-2">
+            <Plus className="h-4 w-4" />
+            <span className="hidden sm:inline">Generar Pay Stub</span>
+          </Button>
+        </div>
       </div>
 
       {/* Stats */}
@@ -119,6 +190,7 @@ export default function PayStubsPage() {
             <SelectItem value="sent">Enviado</SelectItem>
             <SelectItem value="approved">Aprobado</SelectItem>
             <SelectItem value="disputed">En Disputa</SelectItem>
+            <SelectItem value="paid">Pagado</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -150,6 +222,7 @@ export default function PayStubsPage() {
                   "bg-card border rounded-xl overflow-hidden transition-all",
                   stub.status === "disputed" ? "border-red-300 dark:border-red-800" :
                   stub.status === "approved" ? "border-green-300 dark:border-green-800" :
+                  stub.status === "paid" ? "border-blue-300 dark:border-blue-800" :
                   "border-border"
                 )}
               >
@@ -165,6 +238,9 @@ export default function PayStubsPage() {
                       <p className="font-semibold text-foreground text-sm">
                         {driver?.firstName} {driver?.lastName}
                       </p>
+                      <span className="text-xs text-muted-foreground font-mono">
+                        {driver?.driverCode}
+                      </span>
                       <span className={cn("text-xs px-2 py-0.5 rounded-full font-medium", getPayStubStatusColor(stub.status))}>
                         {getPayStubStatusLabel(stub.status)}
                       </span>
@@ -238,16 +314,34 @@ export default function PayStubsPage() {
                           Enviar al Driver
                         </Button>
                       )}
+                      {stub.status === "approved" && (
+                        <>
+                          <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
+                            <CheckCircle className="h-4 w-4" />
+                            Aprobado por el driver
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => markPaidMutation.mutate({ id: stub.id })}
+                            disabled={markPaidMutation.isPending}
+                            className="gap-2 border-blue-500 text-blue-600 hover:bg-blue-50"
+                          >
+                            <DollarSign className="h-3.5 w-3.5" />
+                            Marcar Pagado
+                          </Button>
+                        </>
+                      )}
+                      {stub.status === "paid" && (
+                        <div className="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400">
+                          <DollarSign className="h-4 w-4" />
+                          Pago completado
+                        </div>
+                      )}
                       {stub.status === "disputed" && (
                         <div className="flex items-center gap-2 text-sm text-red-600 dark:text-red-400">
                           <XCircle className="h-4 w-4" />
                           Driver en desacuerdo — contactar para resolver
-                        </div>
-                      )}
-                      {stub.status === "approved" && (
-                        <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
-                          <CheckCircle className="h-4 w-4" />
-                          Aprobado por el driver
                         </div>
                       )}
                     </div>
@@ -259,7 +353,7 @@ export default function PayStubsPage() {
         </div>
       )}
 
-      {/* Generate Dialog */}
+      {/* Generate Single Dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -277,7 +371,7 @@ export default function PayStubsPage() {
                     <SelectContent>
                       {drivers?.filter(d => d.status === "active").map(d => (
                         <SelectItem key={d.id} value={d.id.toString()}>
-                          {d.firstName} {d.lastName}
+                          {d.firstName} {d.lastName} — {d.driverCode}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -310,6 +404,53 @@ export default function PayStubsPage() {
                 </Button>
                 <Button type="submit" className="flex-1" disabled={generateMutation.isPending}>
                   {generateMutation.isPending ? "Calculando..." : "Generar Pay Stub"}
+                </Button>
+              </div>
+            </form>
+          </Form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Generate Dialog */}
+      <Dialog open={bulkOpen} onOpenChange={setBulkOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Zap className="h-5 w-5 text-yellow-500" />
+              Generar Pay Stubs para Todos
+            </DialogTitle>
+          </DialogHeader>
+          <Form {...bulkForm}>
+            <form onSubmit={bulkForm.handleSubmit(v => generateAllMutation.mutate(v))} className="space-y-4">
+              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3 text-sm text-yellow-700 dark:text-yellow-300">
+                Esto generará pay stubs para <strong>todos los drivers activos</strong> en el período seleccionado. Los stubs existentes no serán duplicados.
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <FormField control={bulkForm.control} name="weekStart" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Inicio de Semana</FormLabel>
+                    <FormControl><Input type="date" {...field} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+                <FormField control={bulkForm.control} name="weekEnd" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Fin de Semana</FormLabel>
+                    <FormControl><Input type="date" {...field} /></FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <Button type="button" variant="outline" className="flex-1" onClick={() => setBulkOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button
+                  type="submit"
+                  className="flex-1 bg-yellow-500 hover:bg-yellow-600 text-white"
+                  disabled={generateAllMutation.isPending}
+                >
+                  {generateAllMutation.isPending ? "Generando..." : "Generar para Todos"}
                 </Button>
               </div>
             </form>

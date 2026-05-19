@@ -12,14 +12,30 @@ import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
+// Predefined penalty descriptions
+const PENALTY_TYPES = [
+  { value: "foto_mal", label: "Foto mal" },
+  { value: "direccion_mal", label: "Dirección mal" },
+  { value: "paquete_perdido", label: "Paquete perdido" },
+  { value: "ruta_vieja", label: "Más de X días con la ruta vieja" },
+];
+
 const penaltySchema = z.object({
   driverId: z.string().min(1, "Selecciona un driver"),
-  description: z.string().min(1, "Requerido").max(500),
+  descriptionType: z.string().min(1, "Selecciona un tipo"),
+  extraDays: z.string().optional(),
   amount: z.string().min(1, "Requerido"),
   penaltyDate: z.string().min(1, "Requerido"),
 });
 
 type PenaltyForm = z.infer<typeof penaltySchema>;
+
+function buildDescription(type: string, days?: string): string {
+  if (type === "ruta_vieja" && days) {
+    return `Más de ${days} días con la ruta vieja`;
+  }
+  return PENALTY_TYPES.find(t => t.value === type)?.label ?? type;
+}
 
 export default function PenaltiesPage() {
   const [open, setOpen] = useState(false);
@@ -33,15 +49,17 @@ export default function PenaltiesPage() {
 
   const form = useForm<PenaltyForm>({
     resolver: zodResolver(penaltySchema),
-    defaultValues: { amount: "100.00", penaltyDate: todayString() },
+    defaultValues: { amount: "100.00", penaltyDate: todayString(), descriptionType: "", extraDays: "" },
   });
+
+  const descriptionType = form.watch("descriptionType");
 
   const createMutation = trpc.penalties.create.useMutation({
     onSuccess: () => {
       toast.success("Penalidad registrada");
       utils.penalties.list.invalidate();
       setOpen(false);
-      form.reset({ amount: "100.00", penaltyDate: todayString() });
+      form.reset({ amount: "100.00", penaltyDate: todayString(), descriptionType: "", extraDays: "" });
     },
     onError: (e) => toast.error(e.message),
   });
@@ -53,6 +71,16 @@ export default function PenaltiesPage() {
     },
     onError: (e) => toast.error(e.message),
   });
+
+  function onSubmit(values: PenaltyForm) {
+    const description = buildDescription(values.descriptionType, values.extraDays);
+    createMutation.mutate({
+      driverId: parseInt(values.driverId),
+      description,
+      amount: values.amount,
+      penaltyDate: values.penaltyDate,
+    });
+  }
 
   const totalPenalties = penalties?.reduce((s, p) => s + parseFloat(p.penalty.amount ?? "0"), 0) ?? 0;
 
@@ -135,6 +163,9 @@ export default function PenaltiesPage() {
                   <div>
                     <p className="font-semibold text-foreground text-sm">
                       {driver?.firstName} {driver?.lastName}
+                      <span className="ml-2 text-xs text-muted-foreground font-normal">
+                        ID/DVR: {driver?.driverCode}
+                      </span>
                     </p>
                     <p className="text-xs text-muted-foreground">{formatDate(penalty.penaltyDate)}</p>
                   </div>
@@ -170,7 +201,7 @@ export default function PenaltiesPage() {
             <DialogTitle>Nueva Penalidad</DialogTitle>
           </DialogHeader>
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(v => createMutation.mutate({ ...v, driverId: parseInt(v.driverId) }))} className="space-y-4">
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
               <FormField control={form.control} name="driverId" render={({ field }) => (
                 <FormItem>
                   <FormLabel>Driver</FormLabel>
@@ -181,7 +212,7 @@ export default function PenaltiesPage() {
                     <SelectContent>
                       {drivers?.filter(d => d.status === "active").map(d => (
                         <SelectItem key={d.id} value={d.id.toString()}>
-                          {d.firstName} {d.lastName}
+                          {d.firstName} {d.lastName} — {d.driverCode}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -189,15 +220,36 @@ export default function PenaltiesPage() {
                   <FormMessage />
                 </FormItem>
               )} />
-              <FormField control={form.control} name="description" render={({ field }) => (
+
+              <FormField control={form.control} name="descriptionType" render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Descripción</FormLabel>
-                  <FormControl>
-                    <Input placeholder="Ej: Paquete perdido sin screenshot" {...field} />
-                  </FormControl>
+                  <FormLabel>Tipo de Penalidad</FormLabel>
+                  <Select onValueChange={field.onChange} value={field.value}>
+                    <FormControl>
+                      <SelectTrigger><SelectValue placeholder="Seleccionar tipo..." /></SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {PENALTY_TYPES.map(t => (
+                        <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <FormMessage />
                 </FormItem>
               )} />
+
+              {descriptionType === "ruta_vieja" && (
+                <FormField control={form.control} name="extraDays" render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Número de días (X)</FormLabel>
+                    <FormControl>
+                      <Input type="number" min="1" placeholder="Ej: 7" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )} />
+              )}
+
               <div className="grid grid-cols-2 gap-3">
                 <FormField control={form.control} name="amount" render={({ field }) => (
                   <FormItem>
@@ -216,6 +268,7 @@ export default function PenaltiesPage() {
                   </FormItem>
                 )} />
               </div>
+
               <div className="flex gap-3 pt-2">
                 <Button type="button" variant="outline" className="flex-1" onClick={() => setOpen(false)}>
                   Cancelar

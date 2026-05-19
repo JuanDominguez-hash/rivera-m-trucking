@@ -1,6 +1,17 @@
-import { and, between, desc, eq, gte, lte, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, dailyLogs, drivers, payStubs, penalties, routes, users } from "../drizzle/schema";
+import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
+import {
+  InsertUser,
+  dailyLogs,
+  drivers,
+  driverPhotos,
+  localAuth,
+  payStubs,
+  penalties,
+  routes,
+  users,
+} from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -8,13 +19,21 @@ let _db: ReturnType<typeof drizzle> | null = null;
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
-      _db = drizzle(process.env.DATABASE_URL);
+      const client = postgres(process.env.DATABASE_URL, { max: 1 });
+      _db = drizzle(client);
     } catch (error) {
       console.warn("[Database] Failed to connect:", error);
       _db = null;
     }
   }
   return _db;
+}
+
+// Helper: convert Date or string to YYYY-MM-DD string
+function toDateString(val: Date | string | null | undefined): string {
+  if (!val) return new Date().toISOString().slice(0, 10);
+  if (typeof val === "string") return val.slice(0, 10);
+  return val.toISOString().slice(0, 10);
 }
 
 export async function upsertUser(user: InsertUser): Promise<void> {
@@ -49,7 +68,10 @@ export async function upsertUser(user: InsertUser): Promise<void> {
   if (!values.lastSignedIn) values.lastSignedIn = new Date();
   if (Object.keys(updateSet).length === 0) updateSet.lastSignedIn = new Date();
 
-  await db.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet });
+  await db
+    .insert(users)
+    .values(values)
+    .onConflictDoUpdate({ target: users.openId, set: updateSet });
 }
 
 export async function getUserByOpenId(openId: string) {
@@ -57,6 +79,21 @@ export async function getUserByOpenId(openId: string) {
   if (!db) return undefined;
   const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
   return result[0];
+}
+
+// ─── Local Auth ─────────────────────────────────────────────────────────────
+
+export async function getLocalAuthByEmail(email: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(localAuth).where(eq(localAuth.email, email)).limit(1);
+  return result[0];
+}
+
+export async function createLocalAuth(data: typeof localAuth.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.insert(localAuth).values(data).onConflictDoNothing();
 }
 
 // ─── Drivers ────────────────────────────────────────────────────────────────
@@ -140,8 +177,8 @@ export async function listDailyLogs(opts?: { driverId?: number; dateFrom?: strin
 
   const conditions = [];
   if (opts?.driverId) conditions.push(eq(dailyLogs.driverId, opts.driverId));
-  if (opts?.dateFrom) conditions.push(gte(dailyLogs.logDate, new Date(opts.dateFrom + 'T00:00:00')));
-  if (opts?.dateTo) conditions.push(lte(dailyLogs.logDate, new Date(opts.dateTo + 'T00:00:00')));
+  if (opts?.dateFrom) conditions.push(gte(dailyLogs.logDate, opts.dateFrom));
+  if (opts?.dateTo) conditions.push(lte(dailyLogs.logDate, opts.dateTo));
 
   const logs = await db
     .select()
@@ -162,13 +199,19 @@ export async function listDailyLogs(opts?: { driverId?: number; dateFrom?: strin
 export async function createDailyLog(data: typeof dailyLogs.$inferInsert) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  await db.insert(dailyLogs).values(data);
+  const insertData = {
+    ...data,
+    logDate: toDateString(data.logDate as any),
+  };
+  await db.insert(dailyLogs).values(insertData as any);
 }
 
 export async function updateDailyLog(id: number, data: Partial<typeof dailyLogs.$inferInsert>) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  await db.update(dailyLogs).set({ ...data, updatedAt: new Date() }).where(eq(dailyLogs.id, id));
+  const updateData: any = { ...data, updatedAt: new Date() };
+  if (data.logDate) updateData.logDate = toDateString(data.logDate as any);
+  await db.update(dailyLogs).set(updateData).where(eq(dailyLogs.id, id));
 }
 
 export async function deleteDailyLog(id: number) {
@@ -185,8 +228,8 @@ export async function listPenalties(opts?: { driverId?: number; dateFrom?: strin
 
   const conditions = [];
   if (opts?.driverId) conditions.push(eq(penalties.driverId, opts.driverId));
-  if (opts?.dateFrom) conditions.push(gte(penalties.penaltyDate, new Date(opts.dateFrom + 'T00:00:00')));
-  if (opts?.dateTo) conditions.push(lte(penalties.penaltyDate, new Date(opts.dateTo + 'T00:00:00')));
+  if (opts?.dateFrom) conditions.push(gte(penalties.penaltyDate, opts.dateFrom));
+  if (opts?.dateTo) conditions.push(lte(penalties.penaltyDate, opts.dateTo));
 
   const rows = await db
     .select()
@@ -203,7 +246,11 @@ export async function listPenalties(opts?: { driverId?: number; dateFrom?: strin
 export async function createPenalty(data: typeof penalties.$inferInsert) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  await db.insert(penalties).values(data);
+  const insertData = {
+    ...data,
+    penaltyDate: toDateString(data.penaltyDate as any),
+  };
+  await db.insert(penalties).values(insertData as any);
 }
 
 export async function deletePenalty(id: number) {
@@ -245,27 +292,28 @@ export async function generatePayStub(driverId: number, weekStart: string, weekE
   const db = await getDb();
   if (!db) throw new Error("DB not available");
 
-  // Get all daily logs for this driver in this week
+  const wsDate = toDateString(weekStart);
+  const weDate = toDateString(weekEnd);
+
   const logs = await db
     .select()
     .from(dailyLogs)
     .where(
       and(
         eq(dailyLogs.driverId, driverId),
-        sql`${dailyLogs.logDate} >= ${weekStart}`,
-        sql`${dailyLogs.logDate} <= ${weekEnd}`
+        gte(dailyLogs.logDate, wsDate),
+        lte(dailyLogs.logDate, weDate)
       )
     );
 
-  // Get penalties for this driver in this week
   const penaltyRows = await db
     .select()
     .from(penalties)
     .where(
       and(
         eq(penalties.driverId, driverId),
-        gte(penalties.penaltyDate, new Date(weekStart + 'T00:00:00')),
-        lte(penalties.penaltyDate, new Date(weekEnd + 'T00:00:00'))
+        gte(penalties.penaltyDate, wsDate),
+        lte(penalties.penaltyDate, weDate)
       )
     );
 
@@ -276,21 +324,19 @@ export async function generatePayStub(driverId: number, weekStart: string, weekE
   const totalPenalties = penaltyRows.reduce((s, p) => s + parseFloat(String(p.amount ?? "0")), 0);
   const totalPay = Math.max(0, grossPay - totalPenalties);
 
-  // Check if stub already exists for this driver+week
   const existing = await db
     .select()
     .from(payStubs)
     .where(
       and(
         eq(payStubs.driverId, driverId),
-        eq(payStubs.weekStart, new Date(weekStart + 'T00:00:00')),
-        eq(payStubs.weekEnd, new Date(weekEnd + 'T00:00:00'))
+        eq(payStubs.weekStart, wsDate),
+        eq(payStubs.weekEnd, weDate)
       )
     )
     .limit(1);
 
   if (existing.length > 0) {
-    // Update existing
     await db.update(payStubs).set({
       totalPackages,
       totalDelivered,
@@ -302,13 +348,12 @@ export async function generatePayStub(driverId: number, weekStart: string, weekE
       updatedAt: new Date(),
     }).where(eq(payStubs.id, existing[0].id));
 
-    // Link penalties to this stub
     if (penaltyRows.length > 0) {
       await db.update(penalties).set({ payStubId: existing[0].id }).where(
         and(
           eq(penalties.driverId, driverId),
-          gte(penalties.penaltyDate, new Date(weekStart + 'T00:00:00')),
-          lte(penalties.penaltyDate, new Date(weekEnd + 'T00:00:00'))
+          gte(penalties.penaltyDate, wsDate),
+          lte(penalties.penaltyDate, weDate)
         )
       );
     }
@@ -316,11 +361,10 @@ export async function generatePayStub(driverId: number, weekStart: string, weekE
     return { id: existing[0].id, totalPay };
   }
 
-  // Insert new
   await db.insert(payStubs).values({
     driverId,
-    weekStart: new Date(weekStart + 'T00:00:00'),
-    weekEnd: new Date(weekEnd + 'T00:00:00'),
+    weekStart: wsDate,
+    weekEnd: weDate,
     totalPackages,
     totalDelivered,
     totalDoubles,
@@ -328,7 +372,7 @@ export async function generatePayStub(driverId: number, weekStart: string, weekE
     totalPenalties: totalPenalties.toFixed(2),
     totalPay: totalPay.toFixed(2),
     status: "draft",
-  });
+  } as any);
 
   const inserted = await db
     .select()
@@ -336,8 +380,8 @@ export async function generatePayStub(driverId: number, weekStart: string, weekE
     .where(
       and(
         eq(payStubs.driverId, driverId),
-        eq(payStubs.weekStart, new Date(weekStart + 'T00:00:00')),
-        eq(payStubs.weekEnd, new Date(weekEnd + 'T00:00:00'))
+        eq(payStubs.weekStart, wsDate),
+        eq(payStubs.weekEnd, weDate)
       )
     )
     .limit(1);
@@ -346,8 +390,8 @@ export async function generatePayStub(driverId: number, weekStart: string, weekE
     await db.update(penalties).set({ payStubId: inserted[0].id }).where(
       and(
         eq(penalties.driverId, driverId),
-        gte(penalties.penaltyDate, new Date(weekStart + 'T00:00:00')),
-        lte(penalties.penaltyDate, new Date(weekEnd + 'T00:00:00'))
+        gte(penalties.penaltyDate, wsDate),
+        lte(penalties.penaltyDate, weDate)
       )
     );
   }
@@ -355,18 +399,76 @@ export async function generatePayStub(driverId: number, weekStart: string, weekE
   return { id: inserted[0]?.id ?? 0, totalPay };
 }
 
+export async function generatePayStubsForAll(weekStart: string, weekEnd: string) {
+  const allDrivers = await listDrivers();
+  const results = [];
+  for (const driver of allDrivers) {
+    try {
+      const result = await generatePayStub(driver.id, weekStart, weekEnd);
+      results.push({ driverId: driver.id, ...result });
+    } catch (e) {
+      results.push({ driverId: driver.id, error: String(e) });
+    }
+  }
+  return results;
+}
+
+export async function sendPayStubsToAll(weekStart: string, weekEnd: string) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  const wsDate = toDateString(weekStart);
+  const weDate = toDateString(weekEnd);
+  await db.update(payStubs)
+    .set({ status: "sent", updatedAt: new Date() })
+    .where(
+      and(
+        gte(payStubs.weekStart, wsDate),
+        lte(payStubs.weekEnd, weDate),
+        eq(payStubs.status, "draft")
+      )
+    );
+}
+
 export async function updatePayStubStatus(
   id: number,
-  status: "draft" | "sent" | "approved" | "disputed",
+  status: "draft" | "sent" | "approved" | "disputed" | "paid",
   driverNotes?: string
 ) {
   const db = await getDb();
   if (!db) throw new Error("DB not available");
-  await db.update(payStubs).set({
+  const updateData: any = {
     status,
     ...(driverNotes !== undefined ? { driverNotes } : {}),
     updatedAt: new Date(),
-  }).where(eq(payStubs.id, id));
+  };
+  if (status === "paid") {
+    updateData.paidAt = new Date();
+  }
+  await db.update(payStubs).set(updateData).where(eq(payStubs.id, id));
+}
+
+// ─── Driver Photos ───────────────────────────────────────────────────────────
+
+export async function listDriverPhotos(driverId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(driverPhotos)
+    .where(eq(driverPhotos.driverId, driverId))
+    .orderBy(desc(driverPhotos.createdAt));
+}
+
+export async function createDriverPhoto(data: typeof driverPhotos.$inferInsert) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.insert(driverPhotos).values(data);
+}
+
+export async function deleteDriverPhoto(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB not available");
+  await db.delete(driverPhotos).where(eq(driverPhotos.id, id));
 }
 
 // ─── Reports ────────────────────────────────────────────────────────────────
@@ -374,6 +476,9 @@ export async function updatePayStubStatus(
 export async function weeklyReport(weekStart: string, weekEnd: string) {
   const db = await getDb();
   if (!db) return [];
+
+  const wsDate = toDateString(weekStart);
+  const weDate = toDateString(weekEnd);
 
   const rows = await db
     .select({
@@ -386,8 +491,8 @@ export async function weeklyReport(weekStart: string, weekEnd: string) {
     .from(dailyLogs)
     .where(
       and(
-        gte(dailyLogs.logDate, new Date(weekStart + 'T00:00:00')),
-        lte(dailyLogs.logDate, new Date(weekEnd + 'T00:00:00'))
+        gte(dailyLogs.logDate, wsDate),
+        lte(dailyLogs.logDate, weDate)
       )
     )
     .groupBy(dailyLogs.driverId);
@@ -419,7 +524,7 @@ export async function annualReport(year: number) {
       grossPay: sql<number>`SUM(${dailyLogs.grossPay})`,
     })
     .from(dailyLogs)
-    .where(and(gte(dailyLogs.logDate, new Date(yearStart + 'T00:00:00')), lte(dailyLogs.logDate, new Date(yearEnd + 'T00:00:00'))))
+    .where(and(gte(dailyLogs.logDate, yearStart), lte(dailyLogs.logDate, yearEnd)))
     .groupBy(dailyLogs.driverId);
 
   return Promise.all(logRows.map(async (r) => {
@@ -430,23 +535,21 @@ export async function annualReport(year: number) {
       .where(
         and(
           eq(penalties.driverId, r.driverId),
-          gte(penalties.penaltyDate, new Date(yearStart + 'T00:00:00')),
-          lte(penalties.penaltyDate, new Date(yearEnd + 'T00:00:00'))
+          gte(penalties.penaltyDate, yearStart),
+          lte(penalties.penaltyDate, yearEnd)
         )
       );
 
-    const totalPenalties = parseFloat(String(penaltyRows[0]?.total ?? "0")) || 0;
+    const totalPenalties = parseFloat(String(penaltyRows[0]?.total ?? "0"));
     const grossPay = parseFloat(String(r.grossPay ?? "0"));
-    const totalPay = Math.max(0, grossPay - totalPenalties);
 
     return {
       ...r,
       driverCode: driver?.driverCode,
       driverFirstName: driver?.firstName,
       driverLastName: driver?.lastName,
-      ssnLast4: driver?.ssnLast4,
       totalPenalties,
-      totalPay,
+      netPay: Math.max(0, grossPay - totalPenalties),
     };
   }));
 }

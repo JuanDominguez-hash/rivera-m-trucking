@@ -8,21 +8,27 @@ import {
   annualReport,
   createDailyLog,
   createDriver,
+  createDriverPhoto,
   createPenalty,
   createRoute,
   deleteDailyLog,
   deleteDriver,
+  deleteDriverPhoto,
   deletePenalty,
   deleteRoute,
   generatePayStub,
+  generatePayStubsForAll,
+  getDriverById,
   getDriverByUserId,
   getPayStubById,
   getUserByOpenId,
   listDailyLogs,
+  listDriverPhotos,
   listDrivers,
   listPayStubs,
   listPenalties,
   listRoutes,
+  sendPayStubsToAll,
   updateDailyLog,
   updateDriver,
   updatePayStubStatus,
@@ -53,6 +59,19 @@ export const appRouter = router({
   drivers: router({
     list: protectedProcedure.query(() => listDrivers()),
 
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(async ({ input }) => {
+        const driver = await getDriverById(input.id);
+        if (!driver) throw new TRPCError({ code: "NOT_FOUND" });
+        return driver;
+      }),
+
+    myProfile: protectedProcedure.query(async ({ ctx }) => {
+      const driver = await getDriverByUserId(ctx.user.id);
+      return driver ?? null;
+    }),
+
     create: adminProcedure
       .input(z.object({
         driverCode: z.string().min(1).max(32),
@@ -62,6 +81,7 @@ export const appRouter = router({
         email: z.string().optional(),
         address: z.string().optional(),
         ssnLast4: z.string().max(4).optional(),
+        password: z.string().optional(),
         status: z.enum(["active", "inactive"]),
       }))
       .mutation(async ({ input }) => {
@@ -79,6 +99,7 @@ export const appRouter = router({
         email: z.string().optional(),
         address: z.string().optional(),
         ssnLast4: z.string().max(4).optional(),
+        password: z.string().optional(),
         status: z.enum(["active", "inactive"]).optional(),
       }))
       .mutation(async ({ input }) => {
@@ -91,6 +112,42 @@ export const appRouter = router({
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input }) => {
         await deleteDriver(input.id);
+        return { success: true };
+      }),
+
+    // Photos
+    photos: protectedProcedure
+      .input(z.object({ driverId: z.number() }))
+      .query(({ input }) => listDriverPhotos(input.driverId)),
+
+    myPhotos: protectedProcedure.query(async ({ ctx }) => {
+      const driver = await getDriverByUserId(ctx.user.id);
+      if (!driver) return [];
+      return listDriverPhotos(driver.id);
+    }),
+
+    addPhoto: protectedProcedure
+      .input(z.object({
+        driverId: z.number(),
+        photoUrl: z.string().url(),
+        caption: z.string().optional(),
+      }))
+      .mutation(async ({ input, ctx }) => {
+        // Driver can only add photos for themselves; admin can add for anyone
+        if (ctx.user.role !== "admin") {
+          const driver = await getDriverByUserId(ctx.user.id);
+          if (!driver || driver.id !== input.driverId) {
+            throw new TRPCError({ code: "FORBIDDEN" });
+          }
+        }
+        await createDriverPhoto(input);
+        return { success: true };
+      }),
+
+    deletePhoto: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        await deleteDriverPhoto(input.id);
         return { success: true };
       }),
   }),
@@ -174,7 +231,7 @@ export const appRouter = router({
 
         await createDailyLog({
           ...input,
-          logDate: input.logDate as unknown as Date,
+          logDate: input.logDate as any,
           ratePerPackageSnapshot: route.ratePerPackage,
           ratePerDoubleSnapshot: route.ratePerDouble,
           grossPay: grossPay.toFixed(2),
@@ -192,7 +249,6 @@ export const appRouter = router({
       }))
       .mutation(async ({ input }) => {
         const { id, ...data } = input;
-        // Recalculate grossPay if delivered or doubles changed
         if (data.packagesDelivered !== undefined || data.doublesReturns !== undefined) {
           const logs = await listDailyLogs();
           const existing = logs.find(l => l.log.id === id);
@@ -237,8 +293,10 @@ export const appRouter = router({
       }))
       .mutation(async ({ input }) => {
         await createPenalty({
-          ...input,
-          penaltyDate: input.penaltyDate as unknown as Date,
+          driverId: input.driverId,
+          description: input.description,
+          amount: input.amount,
+          penaltyDate: input.penaltyDate as any,
         });
         return { success: true };
       }),
@@ -264,7 +322,6 @@ export const appRouter = router({
       const driver = await getDriverByUserId(ctx.user.id);
       if (!driver) return [];
       const stubs = await listPayStubs({ driverId: driver.id });
-      // Only return sent/approved/disputed stubs to drivers
       return stubs
         .filter(s => s.stub.status !== "draft")
         .map(s => s.stub);
@@ -281,10 +338,31 @@ export const appRouter = router({
         return result;
       }),
 
+    generateAll: adminProcedure
+      .input(z.object({ weekStart: z.string(), weekEnd: z.string() }))
+      .mutation(async ({ input }) => {
+        const results = await generatePayStubsForAll(input.weekStart, input.weekEnd);
+        return results;
+      }),
+
     send: adminProcedure
       .input(z.object({ id: z.number() }))
       .mutation(async ({ input }) => {
         await updatePayStubStatus(input.id, "sent");
+        return { success: true };
+      }),
+
+    sendAll: adminProcedure
+      .input(z.object({ weekStart: z.string(), weekEnd: z.string() }))
+      .mutation(async ({ input }) => {
+        await sendPayStubsToAll(input.weekStart, input.weekEnd);
+        return { success: true };
+      }),
+
+    markPaid: adminProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(async ({ input }) => {
+        await updatePayStubStatus(input.id, "paid");
         return { success: true };
       }),
 
@@ -366,7 +444,7 @@ export const appRouter = router({
     form1099: adminProcedure
       .input(z.object({ driverId: z.number(), year: z.number() }))
       .mutation(async ({ input }) => {
-        const driver = await import("./db").then(m => m.getDriverById(input.driverId));
+        const driver = await getDriverById(input.driverId);
         if (!driver) throw new TRPCError({ code: "NOT_FOUND" });
 
         const report = await annualReport(input.year);
@@ -399,122 +477,101 @@ function generatePayStubHtml(stub: any, driver: any): string {
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Pay Stub - ${driver?.firstName} ${driver?.lastName}</title>
+  <title>Pay Stub</title>
   <style>
-    body { font-family: Arial, sans-serif; max-width: 700px; margin: 40px auto; padding: 20px; color: #1a1a2e; }
-    .header { background: #1a237e; color: white; padding: 24px; border-radius: 8px; margin-bottom: 24px; }
-    .header h1 { margin: 0; font-size: 22px; }
-    .header p { margin: 4px 0 0; opacity: 0.8; font-size: 13px; }
-    .section { background: #f8f9fa; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
-    .section h2 { margin: 0 0 12px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.05em; color: #555; }
-    .row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #e0e0e0; font-size: 14px; }
-    .row:last-child { border-bottom: none; }
-    .total-row { display: flex; justify-content: space-between; padding: 10px 0; font-size: 18px; font-weight: bold; border-top: 2px solid #1a237e; margin-top: 8px; }
-    .penalty { color: #c62828; }
-    .gross { color: #2e7d32; }
-    .badge { display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: bold; background: #e8f5e9; color: #2e7d32; }
-    .footer { text-align: center; font-size: 11px; color: #999; margin-top: 32px; }
+    body { font-family: Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; }
+    h1 { color: #1a1a2e; border-bottom: 2px solid #1a1a2e; padding-bottom: 10px; }
+    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0; }
+    .info-box { background: #f5f5f5; padding: 15px; border-radius: 8px; }
+    .label { font-size: 12px; color: #666; text-transform: uppercase; }
+    .value { font-size: 18px; font-weight: bold; color: #1a1a2e; }
+    .total { background: #1a1a2e; color: white; padding: 20px; border-radius: 8px; text-align: center; margin-top: 20px; }
+    .total .value { color: white; font-size: 28px; }
+    .status { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; background: #e8f5e9; color: #2e7d32; }
   </style>
 </head>
 <body>
-  <div class="header">
-    <h1>Rivera M Trucking Inc.</h1>
-    <p>Driver Pay Stub — Weekly Payment Summary</p>
+  <h1>Rivera M Trucking — Pay Stub</h1>
+  <div class="info-grid">
+    <div class="info-box">
+      <div class="label">Driver</div>
+      <div class="value">${driver?.firstName ?? ""} ${driver?.lastName ?? ""}</div>
+    </div>
+    <div class="info-box">
+      <div class="label">ID/DVR</div>
+      <div class="value">${driver?.driverCode ?? ""}</div>
+    </div>
+    <div class="info-box">
+      <div class="label">Week</div>
+      <div class="value">${stub.weekStart} – ${stub.weekEnd}</div>
+    </div>
+    <div class="info-box">
+      <div class="label">Status</div>
+      <div class="value"><span class="status">${stub.status}</span></div>
+    </div>
+    <div class="info-box">
+      <div class="label">Total Packages</div>
+      <div class="value">${stub.totalPackages}</div>
+    </div>
+    <div class="info-box">
+      <div class="label">Delivered</div>
+      <div class="value">${stub.totalDelivered}</div>
+    </div>
+    <div class="info-box">
+      <div class="label">Gross Pay</div>
+      <div class="value">${formatCurrency(stub.grossPay)}</div>
+    </div>
+    <div class="info-box">
+      <div class="label">Penalties</div>
+      <div class="value" style="color:#c62828">${formatCurrency(stub.totalPenalties)}</div>
+    </div>
   </div>
-
-  <div class="section">
-    <h2>Driver Information</h2>
-    <div class="row"><span>Name</span><span><strong>${driver?.firstName} ${driver?.lastName}</strong></span></div>
-    <div class="row"><span>Driver ID</span><span>${driver?.driverCode}</span></div>
-    <div class="row"><span>Pay Period</span><span>${stub.weekStart} — ${stub.weekEnd}</span></div>
-    <div class="row"><span>Status</span><span><span class="badge">${stub.status.toUpperCase()}</span></span></div>
+  <div class="total">
+    <div class="label" style="color:#ccc">NET PAY</div>
+    <div class="value">${formatCurrency(stub.totalPay)}</div>
   </div>
-
-  <div class="section">
-    <h2>Activity Summary</h2>
-    <div class="row"><span>Total Packages</span><span>${stub.totalPackages}</span></div>
-    <div class="row"><span>Packages Delivered</span><span class="gross">${stub.totalDelivered}</span></div>
-    <div class="row"><span>Double / Returns</span><span>${stub.totalDoubles}</span></div>
-  </div>
-
-  <div class="section">
-    <h2>Payment Breakdown</h2>
-    <div class="row"><span>Gross Pay</span><span class="gross">${formatCurrency(stub.grossPay)}</span></div>
-    <div class="row"><span>Penalties / Deductions</span><span class="penalty">-${formatCurrency(stub.totalPenalties)}</span></div>
-    <div class="total-row"><span>NET PAY</span><span>${formatCurrency(stub.totalPay)}</span></div>
-  </div>
-
-  ${stub.driverNotes ? `<div class="section"><h2>Driver Notes</h2><p style="font-size:14px;margin:0;">${stub.driverNotes}</p></div>` : ""}
-
-  <div class="footer">
-    <p>Rivera M Trucking Inc. &nbsp;|&nbsp; Generated on ${new Date().toLocaleDateString("en-US")}</p>
-    <p>This document is for informational purposes only.</p>
-  </div>
+  ${stub.driverNotes ? `<div class="info-box" style="margin-top:20px"><div class="label">Driver Notes</div><div>${stub.driverNotes}</div></div>` : ""}
+  <p style="color:#999;font-size:12px;margin-top:30px">Generated on ${new Date().toLocaleDateString()}</p>
 </body>
 </html>`;
 }
 
 function generate1099Html(driver: any, report: any, year: number): string {
-  const totalPay = parseFloat(String(report?.totalPay ?? "0"));
+  const grossPay = parseFloat(String(report?.grossPay ?? "0"));
+  const totalPenalties = parseFloat(String(report?.totalPenalties ?? "0"));
+  const netPay = Math.max(0, grossPay - totalPenalties);
+
   return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>1099-NEC ${year} - ${driver.firstName} ${driver.lastName}</title>
+  <title>Form 1099-NEC ${year}</title>
   <style>
-    body { font-family: Arial, sans-serif; max-width: 700px; margin: 40px auto; padding: 20px; color: #1a1a2e; }
-    .header { background: #1a237e; color: white; padding: 24px; border-radius: 8px; margin-bottom: 24px; }
-    .header h1 { margin: 0; font-size: 22px; }
-    .header p { margin: 4px 0 0; opacity: 0.8; font-size: 13px; }
-    .form-box { border: 2px solid #1a237e; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
-    .form-title { font-size: 20px; font-weight: bold; color: #1a237e; margin-bottom: 16px; }
-    .field { margin-bottom: 12px; }
-    .field label { display: block; font-size: 11px; text-transform: uppercase; color: #666; margin-bottom: 2px; }
-    .field .value { font-size: 16px; font-weight: bold; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
-    .amount { font-size: 28px; color: #2e7d32; font-weight: bold; }
-    .disclaimer { background: #fff8e1; border: 1px solid #f9a825; border-radius: 8px; padding: 16px; font-size: 12px; color: #555; }
-    .footer { text-align: center; font-size: 11px; color: #999; margin-top: 32px; }
+    body { font-family: Arial, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; }
+    h1 { color: #1a1a2e; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 20px 0; }
+    .box { border: 1px solid #ccc; padding: 12px; border-radius: 4px; }
+    .label { font-size: 11px; color: #666; text-transform: uppercase; margin-bottom: 4px; }
+    .value { font-size: 16px; font-weight: bold; }
+    .total-box { background: #1a1a2e; color: white; padding: 20px; border-radius: 8px; text-align: center; }
   </style>
 </head>
 <body>
-  <div class="header">
-    <h1>Rivera M Trucking Inc.</h1>
-    <p>Payer: Rivera M Trucking Inc.</p>
+  <h1>Form 1099-NEC — Tax Year ${year}</h1>
+  <p><strong>Rivera M Trucking</strong></p>
+  <div class="grid">
+    <div class="box"><div class="label">Driver Name</div><div class="value">${driver.firstName} ${driver.lastName}</div></div>
+    <div class="box"><div class="label">ID/DVR</div><div class="value">${driver.driverCode}</div></div>
+    <div class="box"><div class="label">SSN (last 4)</div><div class="value">***-**-${driver.ssnLast4 ?? "XXXX"}</div></div>
+    <div class="box"><div class="label">Tax Year</div><div class="value">${year}</div></div>
+    <div class="box"><div class="label">Gross Pay</div><div class="value">${formatCurrency(grossPay)}</div></div>
+    <div class="box"><div class="label">Total Penalties</div><div class="value" style="color:#c62828">${formatCurrency(totalPenalties)}</div></div>
   </div>
-
-  <div class="form-box">
-    <div class="form-title">Form 1099-NEC — Nonemployee Compensation — Tax Year ${year}</div>
-
-    <div class="field">
-      <label>Payer's Name</label>
-      <div class="value">Rivera M Trucking Inc.</div>
-    </div>
-    <div class="field">
-      <label>Recipient's Name</label>
-      <div class="value">${driver.firstName} ${driver.lastName}</div>
-    </div>
-    <div class="field">
-      <label>Driver ID</label>
-      <div class="value">${driver.driverCode}</div>
-    </div>
-    ${driver.address ? `<div class="field"><label>Address</label><div class="value">${driver.address}</div></div>` : ""}
-    ${driver.ssnLast4 ? `<div class="field"><label>SSN (last 4)</label><div class="value">XXX-XX-${driver.ssnLast4}</div></div>` : ""}
-    <div class="field">
-      <label>Box 1 — Nonemployee Compensation</label>
-      <div class="value amount">${formatCurrency(totalPay)}</div>
-    </div>
+  <div class="total-box">
+    <div class="label" style="color:#ccc">Box 1 — Nonemployee Compensation</div>
+    <div class="value" style="font-size:28px">${formatCurrency(netPay)}</div>
   </div>
-
-  <div class="disclaimer">
-    <strong>Important:</strong> This document summarizes nonemployee compensation paid during tax year ${year}. 
-    The recipient is responsible for reporting this income on their federal and state tax returns. 
-    Please consult a tax professional for guidance on self-employment taxes.
-  </div>
-
-  <div class="footer">
-    <p>Rivera M Trucking Inc. &nbsp;|&nbsp; Generated on ${new Date().toLocaleDateString("en-US")}</p>
-    <p>This is a summary document. Official IRS forms must be filed separately.</p>
-  </div>
+  <p style="color:#999;font-size:12px;margin-top:30px">This is not an official IRS form. Generated on ${new Date().toLocaleDateString()}</p>
 </body>
 </html>`;
 }

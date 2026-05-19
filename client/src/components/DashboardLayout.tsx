@@ -20,12 +20,12 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
 import {
   AlertTriangle,
   BarChart3,
   CalendarDays,
+  Camera,
   FileText,
   LayoutDashboard,
   LogOut,
@@ -38,7 +38,8 @@ import {
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
-import { Button } from "./ui/button";
+
+const APP_NAME = import.meta.env.VITE_APP_NAME || "Rivera M Trucking";
 
 const adminMenuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/" },
@@ -55,6 +56,7 @@ const driverMenuItems = [
   { icon: LayoutDashboard, label: "Mi Dashboard", path: "/" },
   { icon: CalendarDays, label: "Mi Actividad", path: "/my-activity" },
   { icon: Receipt, label: "Mis Pay Stubs", path: "/my-pay-stubs" },
+  { icon: Camera, label: "Mis Fotos", path: "/my-photos" },
 ];
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
@@ -76,34 +78,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   if (loading) return <DashboardLayoutSkeleton />;
 
   if (!user) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[oklch(0.14_0.06_255)] to-[oklch(0.20_0.08_255)]">
-        <div className="flex flex-col items-center gap-8 p-8 max-w-md w-full">
-          <div className="flex flex-col items-center gap-4">
-            <div className="flex items-center gap-3 mb-2">
-              <div className="bg-white/10 rounded-xl p-3">
-                <Truck className="h-10 w-10 text-white" />
-              </div>
-            </div>
-            <div className="text-center">
-              <h1 className="text-3xl font-bold text-white tracking-tight">Rivera M Trucking</h1>
-              <p className="text-sm text-white/60 mt-1">Driver Payment Management</p>
-            </div>
-            <div className="w-16 h-0.5 bg-yellow-400/60 rounded-full" />
-            <p className="text-sm text-white/70 text-center max-w-xs">
-              Accede al sistema de gestión de pagos y operaciones para conductores.
-            </p>
-          </div>
-          <Button
-            onClick={() => { window.location.href = getLoginUrl(); }}
-            size="lg"
-            className="w-full bg-yellow-500 hover:bg-yellow-400 text-gray-900 font-semibold shadow-lg hover:shadow-xl transition-all"
-          >
-            Iniciar Sesión
-          </Button>
-        </div>
-      </div>
-    );
+    // Redirect to local login page
+    window.location.href = "/login";
+    return <DashboardLayoutSkeleton />;
   }
 
   return (
@@ -161,6 +138,11 @@ function DashboardLayoutContent({ children, setSidebarWidth }: DashboardLayoutCo
     };
   }, [isResizing, setSidebarWidth]);
 
+  const handleLogout = async () => {
+    await logout();
+    window.location.href = "/login";
+  };
+
   return (
     <>
       <div className="relative" ref={sidebarRef}>
@@ -180,7 +162,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }: DashboardLayoutCo
                   <Truck className="h-5 w-5 text-yellow-400 shrink-0" />
                   <div className="min-w-0">
                     <span className="font-bold text-sm text-sidebar-foreground truncate block">
-                      Rivera M Trucking
+                      {APP_NAME}
                     </span>
                     <span className="text-xs text-sidebar-foreground/50 truncate block">
                       {isAdmin ? "Administrador" : "Driver"}
@@ -241,7 +223,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }: DashboardLayoutCo
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
                 <DropdownMenuItem
-                  onClick={logout}
+                  onClick={handleLogout}
                   className="cursor-pointer text-destructive focus:text-destructive"
                 >
                   <LogOut className="mr-2 h-4 w-4" />
@@ -268,7 +250,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }: DashboardLayoutCo
               <div className="flex items-center gap-2">
                 <Truck className="h-4 w-4 text-primary" />
                 <span className="font-semibold text-sm text-foreground">
-                  {activeMenuItem?.label ?? "Rivera M Trucking"}
+                  {activeMenuItem?.label ?? APP_NAME}
                 </span>
               </div>
             </div>
