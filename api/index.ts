@@ -11,26 +11,45 @@ const app = express();
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
+// Health check endpoint
+app.get("/api/health", (_req, res) => {
+  res.status(200).json({ status: "ok", time: new Date().toISOString() });
+});
+
 registerStorageProxy(app);
 registerOAuthRoutes(app);
 
 app.use(
   "/api/trpc",
-  createExpressMiddleware({ router: appRouter, createContext })
+  createExpressMiddleware({ 
+    router: appRouter, 
+    createContext,
+    onError({ error, path }) {
+      console.error(`>>> tRPC Error on path "${path}":`, error);
+    }
+  })
 );
 
-// Seed demo users on first request
+// Seed demo users middleware
 let seeded = false;
-app.use(async (_req, _res, next) => {
-  if (!seeded) {
+app.use(async (req, _res, next) => {
+  if (!seeded && req.path.startsWith("/api/")) {
     seeded = true;
     try {
+      console.log("[Seed] Attempting to seed demo users...");
       await seedDemoUsers();
+      console.log("[Seed] Success");
     } catch (e) {
-      console.warn("[Seed] Demo users may already exist:", String(e).slice(0, 100));
+      console.warn("[Seed] Demo users may already exist or DB error:", String(e));
     }
   }
   next();
+});
+
+// Global error handler
+app.use((err: any, _req: any, res: any, _next: any) => {
+  console.error(">>> Global Server Error:", err);
+  res.status(500).json({ error: "Internal Server Error", message: String(err) });
 });
 
 export default app;
