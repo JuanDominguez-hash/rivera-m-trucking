@@ -1,10 +1,14 @@
 import "dotenv/config";
 import express from "express";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
-import { registerOAuthRoutes, seedDemoUsers } from "../server/_core/oauth.js";
-import { registerStorageProxy } from "../server/_core/storageProxy.js";
-import { appRouter } from "../server/routers.js";
-import { createContext } from "../server/_core/context.js";
+
+// Log startup
+console.log(">>> Starting Serverless Function...");
+
+import { registerOAuthRoutes, seedDemoUsers } from "../server/_core/oauth";
+import { registerStorageProxy } from "../server/_core/storageProxy";
+import { appRouter } from "../server/routers";
+import { createContext } from "../server/_core/context";
 
 const app = express();
 
@@ -13,7 +17,12 @@ app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 // Health check endpoint
 app.get("/api/health", (_req, res) => {
-  res.status(200).json({ status: "ok", time: new Date().toISOString() });
+  console.log(">>> Health Check Requested");
+  res.status(200).json({ 
+    status: "ok", 
+    time: new Date().toISOString(),
+    env: process.env.NODE_ENV
+  });
 });
 
 registerStorageProxy(app);
